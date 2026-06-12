@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536  # text-embedding-3-small native dimension
 
     # EDGAR — SEC requires a descriptive User-Agent with contact info
     edgar_user_agent: str = "FinanceMatrixAgent contact@example.com"
