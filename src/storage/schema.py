@@ -27,6 +27,7 @@ from sqlalchemy import (
     BigInteger,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -60,6 +61,28 @@ class DocumentRow(Base):
         back_populates="document",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+
+
+class LlmUsageRow(Base):
+    """One row per LLM call (embedding or completion).
+
+    Powers the daily-budget guard and the per-cell cost telemetry the eval
+    harness will key off. Every call writes here — there is no "free" LLM
+    call in this codebase by design.
+    """
+    __tablename__ = "llm_usage"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(64), index=True)
+    operation: Mapped[str] = mapped_column(String(16))  # "embedding" | "completion"
+    model: Mapped[str] = mapped_column(String(64))
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
 
 

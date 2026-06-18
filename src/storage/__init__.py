@@ -12,12 +12,13 @@ from src.storage.repository import (
     get_chunks_for_doc,
     save_filing,
 )
-from src.storage.schema import Base, ChunkRow, DocumentRow
+from src.storage.schema import Base, ChunkRow, DocumentRow, LlmUsageRow
 
 __all__ = [
     "Base",
     "ChunkRow",
     "DocumentRow",
+    "LlmUsageRow",
     "fetch_document",
     "get_chunks_for_doc",
     "get_engine",
