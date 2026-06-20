@@ -117,13 +117,20 @@ def _resolve_headers(text: str) -> list[tuple[int, str]]:
     are TOC entries. We then sort the survivors by offset; if the filing's
     body order disagrees with item-number order (rare but possible in
     amendments) we still respect the document layout, not the numbering.
+
+    Offsets are advanced past the leading whitespace the `^\\s*` part of
+    the regex matches, so block = text[offset:] starts with "Item …" not
+    with a stray `\\n`. Downstream slicing depends on this.
     """
     last_by_item: dict[str, int] = {}
     for m in _ITEM_RE.finditer(text):
         item = _normalize_item_id(m.group("num"), m.group("sub"))
         if item not in ITEM_TITLES:
             continue
-        last_by_item[item] = m.start()
+        pos = m.start()
+        while pos < len(text) and text[pos] in " \t\n":
+            pos += 1
+        last_by_item[item] = pos
     return sorted(((pos, item) for item, pos in last_by_item.items()))
 
 

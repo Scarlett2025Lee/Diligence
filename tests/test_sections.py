@@ -93,6 +93,28 @@ def test_char_offsets_align_with_cleaned_text():
         assert s.text[:40] in text[s.char_start : s.char_end]
 
 
+def test_section_body_excludes_header_line():
+    """The body must not repeat the header — wastes tokens + pollutes embeddings.
+
+    Realistic 10-K HTML wraps the header in its own <p> so html_to_text
+    emits a blank line before the body. The parser must skip that header
+    line cleanly; this test pins that against regressions.
+    """
+    html = (
+        "<html><body>"
+        "<p>Item 1A. Risk Factors ............ 10</p>"  # TOC
+        "<p><b>Item 1A. Risk Factors</b></p>"            # real header
+        "<p>" + ("The Company's business is subject to risks. " * 10) + "</p>"
+        "</body></html>"
+    )
+    sections = parse_sections(html)
+    risk = next(s for s in sections if s.item == "1A")
+    assert not risk.text.lower().startswith("item "), (
+        f"section body should not start with header line; got {risk.text[:60]!r}"
+    )
+    assert risk.text.startswith("The Company")
+
+
 def test_title_falls_back_to_canonical_when_missing():
     # Header without a human title after the number -> use ITEM_TITLES.
     html = (
