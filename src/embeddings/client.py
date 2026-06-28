@@ -15,19 +15,19 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
 
 import tiktoken
 from openai import OpenAI
-from sqlalchemy import func, select
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from src.core.budget import BudgetExceeded, guard_budget, log_llm_usage, spent_today
 from src.core.config import get_settings
 from src.core.logging import get_logger
-from src.storage.db import get_session
-from src.storage.schema import LlmUsageRow
 
 log = get_logger(__name__)
+
+# Re-export so callers that imported BudgetExceeded from here still work.
+__all__ = ["BudgetExceeded", "EmbeddingClient", "PRICING_USD_PER_1M_TOKENS"]
 
 # Prices in USD per 1M tokens. Source: OpenAI public pricing.
 # When OpenAI ships a new model, add it here; the client will use whatever
@@ -42,10 +42,6 @@ PRICING_USD_PER_1M_TOKENS: dict[str, float] = {
 _MAX_TOKENS_PER_REQUEST = 300_000
 # Conservative ceiling on inputs per request — the API documents 2048.
 _MAX_INPUTS_PER_REQUEST = 2048
-
-
-class BudgetExceeded(RuntimeError):
-    """Raised when a call would push today's spend past DAILY_BUDGET_USD."""
 
 
 @dataclass(frozen=True)
@@ -168,37 +164,21 @@ class EmbeddingClient:
         return tokens * price / 1_000_000
 
     def _guard_budget(self, projected_cost: float) -> None:
-        spent = _spent_today()
-        if spent + projected_cost > self._budget:
-            raise BudgetExceeded(
-                f"Daily budget ${self._budget:.2f} would be exceeded: "
-                f"spent ${spent:.4f}, this call adds ${projected_cost:.4f}"
-            )
+        guard_budget(projected_cost, self._budget)
 
     def _log_usage(
         self, *, request_id: str, tokens: int, cost: float, latency_ms: int
     ) -> None:
-        with get_session() as session:
-            session.add(
-                LlmUsageRow(
-                    request_id=request_id,
-                    operation="embedding",
-                    model=self._model,
-                    input_tokens=tokens,
-                    output_tokens=0,
-                    cost_usd=cost,
-                    latency_ms=latency_ms,
-                )
-            )
+        log_llm_usage(
+            request_id=request_id,
+            operation="embedding",
+            model=self._model,
+            input_tokens=tokens,
+            output_tokens=0,
+            cost_usd=cost,
+            latency_ms=latency_ms,
+        )
 
 
-def _spent_today() -> float:
-    """Total USD spent on LLM calls since 00:00 today (server local time)."""
-    today_start = datetime.combine(date.today(), datetime.min.time())
-    with get_session() as session:
-        result = session.execute(
-            select(func.coalesce(func.sum(LlmUsageRow.cost_usd), 0.0)).where(
-                LlmUsageRow.created_at >= today_start
-            )
-        ).scalar_one()
-        return float(result)
+# Re-export so tests that patched src.embeddings.client._spent_today still work.
+_spent_today = spent_today

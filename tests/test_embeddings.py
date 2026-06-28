@@ -38,12 +38,28 @@ def _make_client() -> EmbeddingClient:
     return client
 
 
-def _stub_usage(spent_today: float = 0.0):
-    """Patch the DB-touching helpers so the test never opens a session."""
+def _stub_usage():
+    """Patch the DB-touching helpers so happy-path tests never open a session.
+
+    Patch at the import site (src.embeddings.client) because
+    `from src.core.budget import ...` rebound the names there.
+    """
     return patch.multiple(
         "src.embeddings.client",
-        _spent_today=MagicMock(return_value=spent_today),
-        get_session=MagicMock(),
+        guard_budget=MagicMock(),
+        log_llm_usage=MagicMock(),
+    )
+
+
+def _stub_for_budget_refusal(spent_today_value: float):
+    """For the BudgetExceeded test only — let guard_budget run with a
+    controlled spent_today, but no-op the usage logger so we still don't
+    touch the DB. Spent value is read from src.core.budget (where
+    guard_budget looks it up internally)."""
+    return patch.multiple(
+        "src.core.budget",
+        spent_today=MagicMock(return_value=spent_today_value),
+        log_llm_usage=MagicMock(),
     )
 
 
@@ -96,7 +112,7 @@ def test_embed_batch_calls_openai_and_returns_aligned_vectors():
     )
     client._client.embeddings.create.return_value = fake
 
-    with _stub_usage(spent_today=0.0):
+    with _stub_usage():
         result = client.embed_batch(["hello world", "foo bar"])
 
     assert len(result.vectors) == 2
@@ -111,7 +127,7 @@ def test_embed_batch_refuses_when_over_budget():
     client = _make_client()
     # Daily budget default is $5; pretend $4.9999 already spent, request
     # costs more than the slack.
-    with _stub_usage(spent_today=4.9999):
+    with _stub_for_budget_refusal(spent_today_value=4.9999):
         with patch.object(client, "count_tokens", return_value=1_000_000):
             with pytest.raises(BudgetExceeded):
                 client.embed_batch(["very expensive text"])
