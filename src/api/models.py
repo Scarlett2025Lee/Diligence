@@ -32,6 +32,10 @@ class CitationOut(BaseModel):
     body_start: int
     body_end: int
     quote: str
+    # Resolved on the backend (not stored on chunks) so the frontend can
+    # link straight to the original filing on EDGAR — full original
+    # formatting with no parser reconstruction needed.
+    source_url: str | None = None
 
 
 class CellOut(BaseModel):

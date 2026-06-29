@@ -79,9 +79,10 @@ async def post_matrix(req: MatrixRequest) -> list[CellOut]:
     until the last cell finishes.
     """
     questions = [Question(id=q.id, text=q.text) for q in req.questions]
+    url_for = _resolve_source_urls(req.doc_ids)
     cells: list[CellOut] = []
     async for cell in run_matrix(req.doc_ids, questions, k=req.k):
-        cells.append(_to_out(cell))
+        cells.append(_to_out(cell, url_for))
     return cells
 
 
@@ -93,17 +94,22 @@ async def post_matrix_stream(req: MatrixRequest) -> StreamingResponse:
     no waiting for the slowest cell.
     """
     questions = [Question(id=q.id, text=q.text) for q in req.questions]
+    url_for = _resolve_source_urls(req.doc_ids)
 
     async def event_stream():
         async for cell in run_matrix(req.doc_ids, questions, k=req.k):
-            payload = _to_out(cell).model_dump_json()
+            payload = _to_out(cell, url_for).model_dump_json()
             yield f"data: {payload}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-def _to_out(cell) -> CellOut:
-    """CellResult dataclass → CellOut pydantic. Shapes match 1:1."""
+def _to_out(cell, url_for: dict[str, str | None]) -> CellOut:
+    """CellResult dataclass → CellOut pydantic. Shapes match 1:1.
+
+    `url_for` is a doc_id → EDGAR URL map prepared by the caller so we
+    don't hit Postgres once per citation.
+    """
     return CellOut(
         doc_id=cell.doc_id,
         question_id=cell.question_id,
@@ -118,6 +124,7 @@ def _to_out(cell) -> CellOut:
                 body_start=c.body_start,
                 body_end=c.body_end,
                 quote=c.quote,
+                source_url=url_for.get(c.doc_id),
             )
             for c in cell.citations
         ],
@@ -125,3 +132,25 @@ def _to_out(cell) -> CellOut:
         latency_ms=cell.latency_ms,
         error=cell.error,
     )
+
+
+def _resolve_source_urls(doc_ids: list[str]) -> dict[str, str | None]:
+    """Return {doc_id: EDGAR URL} for every doc_id (None if unknown).
+
+    EDGAR archive convention:
+        https://www.sec.gov/Archives/edgar/data/<cik_int>/<accession_nodash>/<primary_doc>
+    """
+    if not doc_ids:
+        return {}
+    with get_session() as session:
+        rows = session.execute(
+            select(DocumentRow).where(DocumentRow.doc_id.in_(doc_ids))
+        ).scalars()
+        urls: dict[str, str | None] = {d: None for d in doc_ids}
+        for r in rows:
+            acc_nodash = r.doc_id.replace("-", "")
+            urls[r.doc_id] = (
+                f"https://www.sec.gov/Archives/edgar/data/"
+                f"{int(r.cik)}/{acc_nodash}/{r.primary_doc}"
+            )
+        return urls

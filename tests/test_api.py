@@ -68,7 +68,11 @@ def test_post_matrix_returns_cell_results():
         "k": 5,
     }
 
-    with patch("src.api.main.run_matrix", fake_run_matrix):
+    with patch("src.api.main.run_matrix", fake_run_matrix), \
+         patch("src.api.main._resolve_source_urls", return_value={
+             "acc-1": "https://www.sec.gov/Archives/edgar/data/1/acc1/p.htm",
+             "acc-2": None,
+         }):
         resp = client.post("/api/matrix", json=payload)
 
     assert resp.status_code == 200
@@ -76,6 +80,9 @@ def test_post_matrix_returns_cell_results():
     assert len(body) == 2
     keys = {(c["doc_id"], c["question_id"]) for c in body}
     assert keys == {("acc-1", "q1"), ("acc-2", "q1")}
+    by_doc = {c["doc_id"]: c for c in body}
+    assert by_doc["acc-1"]["citations"][0]["source_url"].endswith("/p.htm")
+    assert by_doc["acc-2"]["citations"][0]["source_url"] is None
     cell = body[0]
     assert cell["status"] == "done"
     assert cell["answer"].startswith("answer for ")
@@ -99,6 +106,33 @@ def test_post_matrix_validates_min_inputs():
     assert resp.status_code == 422
 
 
+def test_resolve_source_urls_formats_edgar_archive_paths():
+    """EDGAR archive URLs are deterministic given (cik_int, accession_nodash, primary_doc)."""
+    from src.api.main import _resolve_source_urls
+
+    fake_session = MagicMock()
+    fake_session.__enter__.return_value = fake_session
+    fake_session.__exit__.return_value = False
+    fake_session.execute.return_value.scalars.return_value = iter([
+        MagicMock(doc_id="0000320193-25-000079", cik="0000320193",
+                  primary_doc="aapl-20250928.htm"),
+    ])
+
+    with patch("src.api.main.get_session", return_value=fake_session):
+        urls = _resolve_source_urls(["0000320193-25-000079", "missing"])
+
+    assert urls["0000320193-25-000079"] == (
+        "https://www.sec.gov/Archives/edgar/data/"
+        "320193/000032019325000079/aapl-20250928.htm"
+    )
+    assert urls["missing"] is None
+
+
+def test_resolve_source_urls_empty_input_returns_empty():
+    from src.api.main import _resolve_source_urls
+    assert _resolve_source_urls([]) == {}
+
+
 def test_post_matrix_stream_emits_sse_per_cell():
     async def fake_run_matrix(doc_ids, questions, *, k):
         for d in doc_ids:
@@ -112,7 +146,8 @@ def test_post_matrix_stream_emits_sse_per_cell():
         "doc_ids": ["a", "b"],
         "questions": [{"id": "q", "text": "?"}],
     }
-    with patch("src.api.main.run_matrix", fake_run_matrix):
+    with patch("src.api.main.run_matrix", fake_run_matrix), \
+         patch("src.api.main._resolve_source_urls", return_value={"a": None, "b": None}):
         with client.stream("POST", "/api/matrix/stream", json=payload) as resp:
             assert resp.status_code == 200
             body = resp.read().decode()

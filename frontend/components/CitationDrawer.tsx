@@ -39,12 +39,30 @@ export function CitationDrawer({ citation, onClose }: Props) {
           </button>
         </header>
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-            Quoted passage
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+              Quoted passage
+            </div>
+            {citation.source_url && (
+              <a
+                href={citation.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+              >
+                View on EDGAR <span aria-hidden>↗</span>
+              </a>
+            )}
           </div>
-          <blockquote className="mt-2 border-l-2 border-blue-300 bg-blue-50/40 px-4 py-3 text-sm leading-relaxed text-zinc-800">
+          <blockquote className="mt-2 whitespace-pre-wrap border-l-2 border-blue-300 bg-blue-50/40 px-4 py-3 text-sm leading-relaxed text-zinc-800">
             {citation.quote}
           </blockquote>
+          {citation.source_url && (
+            <p className="mt-3 text-xs text-zinc-500">
+              The cleaned excerpt above is what the agent reads. Open the original
+              on EDGAR to see full formatting — tables, footnotes, and inline XBRL.
+            </p>
+          )}
         </div>
       </aside>
     </>

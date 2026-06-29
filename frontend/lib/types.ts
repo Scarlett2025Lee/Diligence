@@ -22,6 +22,9 @@ export type Citation = {
   body_start: number;     // offset into the cited Section's body
   body_end: number;
   quote: string;          // exact text supporting the answer
+  // Resolved by the backend (computed from the documents table) — links
+  // to the original filing on EDGAR with full HTML formatting.
+  source_url?: string | null;
 };
 
 export type CellStatus = "pending" | "running" | "done" | "error";
