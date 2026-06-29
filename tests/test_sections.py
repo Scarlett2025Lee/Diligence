@@ -59,6 +59,29 @@ firm, are included beginning on page F-1 of this Annual Report on Form
 """
 
 
+def test_html_to_text_renders_tables_as_one_row_per_line():
+    """SEC tables wrap every cell in <td>. Previously each cell got a
+    trailing \\n and tables exploded into one-column-per-line. After the
+    fix, cells stay inline (space-separated) and only <tr> ends a line."""
+    html = """
+    <html><body>
+    <p>Item 7. MD&amp;A</p>
+    <p>Body text for Item 7 to clear the min-section-chars filter. """ + ("padding. " * 30) + """</p>
+    <table>
+      <tr><td>Americas</td><td>$</td><td>178,353</td><td>7%</td><td>$</td><td>167,045</td></tr>
+      <tr><td>Europe</td><td>$</td><td>101,328</td><td>10%</td><td>$</td><td>91,827</td></tr>
+    </table>
+    </body></html>
+    """
+    text = html_to_text(html)
+    # Each row stays on its own line.
+    assert "Americas $ 178,353" in text
+    assert "Europe $ 101,328" in text
+    # Cell values are NOT split onto separate lines.
+    lonely = "\n178,353\n"
+    assert lonely not in text, "table cells should not each get their own line"
+
+
 def test_html_to_text_strips_tags_and_normalizes_whitespace():
     text = html_to_text(FIXTURE_HTML)
     assert "<p>" not in text

@@ -90,10 +90,16 @@ def html_to_text(html: str) -> str:
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
-    # Force a newline after every block tag so headers don't get glued to
-    # surrounding text. get_text() with a separator collapses inline tags.
+    # Force a newline after each block-level boundary. NB: tr is here,
+    # td/th are NOT — separating every cell with a newline turned every
+    # SEC table into one column per line. With cells left alone, the
+    # default get_text(separator=" ") puts a single space between cells
+    # and the tr-level newline ends the row. Output:
+    #     Americas $ 178,353  7 %  $ 167,045  3 %  $ 162,560
+    # instead of "Americas" / "$" / "178,353" / "7" / "%" each on its
+    # own line.
     for tag in soup.find_all(
-        ["p", "div", "br", "li", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6"]
+        ["p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"]
     ):
         tag.append("\n")
 
