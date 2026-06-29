@@ -1,7 +1,9 @@
-import { MatrixGrid } from "@/components/MatrixGrid";
-import { mockFilings, mockQuestions, mockResults } from "@/lib/mock";
+import { Matrix } from "@/components/Matrix";
+import { mockQuestions } from "@/lib/mock";
 
 export default function Home() {
+  // The questions list is a frontend authoring concern (Hebbia-style "what
+  // do I want to ask across every filing"). Filings come from the backend.
   return (
     <main className="min-h-screen px-6 py-10 md:px-10">
       <header className="mb-8 max-w-3xl">
@@ -18,16 +20,7 @@ export default function Home() {
         </p>
       </header>
 
-      <MatrixGrid
-        filings={mockFilings}
-        questions={mockQuestions}
-        results={mockResults}
-      />
-
-      <footer className="mt-8 text-xs text-zinc-400">
-        Showing mock data. Wire up <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">/api/matrix</code>{" "}
-        to replace with live answers.
-      </footer>
+      <Matrix initialQuestions={mockQuestions} />
     </main>
   );
 }
