@@ -35,7 +35,8 @@ async def ingest_ticker(
 
     for filing in filings[:limit]:
         html = await client.fetch_filing_html(filing)
-        sections = parse_sections(html)
+        # Form matters: 10-Qs get part-scoped item ids ("I.2"), 10-Ks flat.
+        sections = parse_sections(html, form=filing["form"])
         chunks = []
         for section in sections:
             chunks.extend(chunk_section(section, doc_id=filing["accession"]))

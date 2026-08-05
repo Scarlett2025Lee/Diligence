@@ -149,3 +149,95 @@ def test_title_falls_back_to_canonical_when_missing():
     sections = parse_sections(html)
     assert len(sections) == 1
     assert sections[0].title == ITEM_TITLES["1A"]
+
+
+# ---- 10-Q part-aware parsing -------------------------------------------------
+
+FIXTURE_10Q_HTML = """
+<html><body>
+<h1>EXAMPLE CORP FORM 10-Q</h1>
+
+<div>Table of Contents</div>
+<p>PART I - FINANCIAL INFORMATION</p>
+<p>Item 1. Financial Statements ... 3</p>
+<p>Item 2. Management's Discussion and Analysis ... 20</p>
+<p>PART II - OTHER INFORMATION</p>
+<p>Item 1. Legal Proceedings ... 40</p>
+<p>Item 1A. Risk Factors ... 41</p>
+<p>Item 2. Unregistered Sales ... 45</p>
+
+<p><b>PART I - FINANCIAL INFORMATION</b></p>
+
+<p><b>Item 1. Financial Statements</b></p>
+<p>The unaudited condensed consolidated financial statements of Example Corp
+are presented below, including balance sheets as of the quarter end and
+statements of operations for the three and six month periods then ended.</p>
+
+<p><b>Item 2. Management's Discussion and Analysis of Financial Condition</b></p>
+<p>Revenue for the quarter was $7.7 billion, an increase of 32% year over
+year, driven by strong Data Center segment growth. We expect continued
+momentum in AI accelerator demand in the second half of the year, and
+we are increasing our full-year outlook for Data Center revenue growth.</p>
+
+<p><b>Item 3. Quantitative and Qualitative Disclosures About Market Risk</b></p>
+<p>There have been no material changes to our market risk exposures from
+those described in our most recent Annual Report on Form 10-K, which
+remains the authoritative discussion of interest-rate and currency risk.</p>
+
+<p><b>PART II - OTHER INFORMATION</b></p>
+
+<p><b>Item 1. Legal Proceedings</b></p>
+<p>The Company is party to various legal proceedings arising in the
+ordinary course of business, none of which management believes will have
+a material adverse effect on the financial statements taken as a whole.</p>
+
+<p><b>Item 1A. Risk Factors</b></p>
+<p>Our business depends heavily on the semiconductor demand cycle and on
+continued access to advanced foundry capacity. Export controls on advanced
+computing products could materially reduce revenue from certain regions.</p>
+
+<p><b>Item 2. Unregistered Sales of Equity Securities and Use of Proceeds</b></p>
+<p>During the quarter the Company repurchased 5.2 million shares of common
+stock at an average price of $150.00 per share under the previously
+announced repurchase program, which has $4.1 billion remaining capacity.</p>
+</body></html>
+"""
+
+
+def test_10q_keeps_both_parts_items_despite_number_collisions():
+    sections = parse_sections(FIXTURE_10Q_HTML, form="10-Q")
+    items = [s.item for s in sections]
+    # Part I MD&A must survive even though Part II also has an Item 2.
+    assert "I.2" in items
+    assert "II.2" in items
+    assert "II.1A" in items
+
+
+def test_10q_mdna_contains_outlook_language():
+    sections = parse_sections(FIXTURE_10Q_HTML, form="10-Q")
+    mdna = next(s for s in sections if s.item == "I.2")
+    assert "outlook" in mdna.text.lower()
+    assert mdna.title.lower().startswith("management")
+
+
+def test_10q_part2_items_have_part2_content():
+    sections = parse_sections(FIXTURE_10Q_HTML, form="10-Q")
+    buybacks = next(s for s in sections if s.item == "II.2")
+    assert "repurchased" in buybacks.text
+    risk = next(s for s in sections if s.item == "II.1A")
+    assert "foundry" in risk.text
+
+
+def test_10q_sections_are_in_document_order():
+    sections = parse_sections(FIXTURE_10Q_HTML, form="10-Q")
+    starts = [s.char_start for s in sections]
+    assert starts == sorted(starts)
+    part1_max = max(s.char_start for s in sections if s.item.startswith("I."))
+    part2_min = min(s.char_start for s in sections if s.item.startswith("II."))
+    assert part1_max < part2_min
+
+
+def test_10k_parsing_unchanged_by_default_form():
+    # The original fixture still parses identically with the default arg.
+    sections = parse_sections(FIXTURE_HTML)
+    assert [s.item for s in sections] == ["1", "1A", "7", "7A", "8"]

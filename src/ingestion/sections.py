@@ -16,9 +16,17 @@ Approach:
      ones. The genuine section header is always after the TOC.
   5. Slice the text between consecutive chosen headers -> Section bodies.
 
-This is heuristic, not a SEC-grade parser. It targets the modern HTML 10-Ks
-(2001+) which dominate EDGAR. Edge cases (amendments, embedded XBRL,
-exhibit-only filings) are out of scope for Phase 1.
+10-Q twist: a 10-Q has TWO parts whose item numbers collide (Part I Item 2
+is MD&A; Part II Item 2 is Unregistered Sales). The plain last-occurrence
+rule would keep only the Part II items and silently drop MD&A — the exact
+section a "management outlook" question needs. So for 10-Qs we first locate
+the PART I / PART II headings (same last-occurrence idea, anchored so the
+TOC's part entries lose), then resolve items independently inside each
+part's range and namespace the ids: "I.2", "II.1A".
+
+This is heuristic, not a SEC-grade parser. It targets the modern HTML
+filings (2001+) which dominate EDGAR. Edge cases (amendments, embedded
+XBRL, exhibit-only filings) are out of scope for Phase 1.
 """
 from __future__ import annotations
 
@@ -55,6 +63,24 @@ ITEM_TITLES: dict[str, str] = {
     "16": "Form 10-K Summary",
 }
 
+# Canonical titles for 10-Q items, keyed by part-scoped id. Part I and
+# Part II reuse item numbers, so the id carries the part: "I.2" is MD&A,
+# "II.2" is buybacks. These ids flow into Chunk.item and the citation
+# chips ("Item I.2") — compact and unambiguous.
+ITEM_TITLES_10Q: dict[str, str] = {
+    "I.1": "Financial Statements",
+    "I.2": "Management's Discussion and Analysis",
+    "I.3": "Quantitative and Qualitative Disclosures About Market Risk",
+    "I.4": "Controls and Procedures",
+    "II.1": "Legal Proceedings",
+    "II.1A": "Risk Factors",
+    "II.2": "Unregistered Sales of Equity Securities and Use of Proceeds",
+    "II.3": "Defaults Upon Senior Securities",
+    "II.4": "Mine Safety Disclosures",
+    "II.5": "Other Information",
+    "II.6": "Exhibits",
+}
+
 # Item header anywhere in the line. Tolerates Unicode dashes, optional period
 # after the number, optional "Part" prefix on a prior line, and stray
 # whitespace from HTML rendering. The trailing lookahead requires a space or
@@ -62,6 +88,10 @@ ITEM_TITLES: dict[str, str] = {
 _ITEM_RE = re.compile(
     r"(?im)^\s*item\s+(?P<num>\d{1,2})(?P<sub>[A-C])?\s*[.—–:\-]?(?=\s|$)"
 )
+
+# PART I / PART II heading at line start. Roman numerals only — 10-Qs have
+# exactly two parts, 10-Ks up to four, and we only branch on I/II here.
+_PART_RE = re.compile(r"(?im)^\s*part\s+(?P<part>II|I)\b")
 
 # Section bodies shorter than this are almost certainly TOC remnants or
 # a placeholder like "Item 6. [Reserved]". Kept low so we don't drop the
@@ -116,22 +146,34 @@ def _normalize_item_id(num: str, sub: str | None) -> str:
     return f"{int(num)}{sub.upper()}" if sub else str(int(num))
 
 
-def _resolve_headers(text: str) -> list[tuple[int, str]]:
-    """Return [(char_offset, item_id)] sorted by position.
+def _resolve_headers(
+    text: str,
+    *,
+    start: int = 0,
+    end: int | None = None,
+    titles: dict[str, str] | None = None,
+    id_prefix: str = "",
+) -> list[tuple[int, str]]:
+    """Return [(char_offset, item_id)] sorted by position, scanning
+    text[start:end] only.
 
     For each distinct item id we keep only the LAST match — earlier matches
     are TOC entries. We then sort the survivors by offset; if the filing's
     body order disagrees with item-number order (rare but possible in
     amendments) we still respect the document layout, not the numbering.
 
-    Offsets are advanced past the leading whitespace the `^\\s*` part of
-    the regex matches, so block = text[offset:] starts with "Item …" not
-    with a stray `\\n`. Downstream slicing depends on this.
+    `titles` is the validity filter (which item numbers are real for this
+    form/part); `id_prefix` namespaces the returned ids ("I." / "II.") so
+    10-Q parts don't collide. Offsets are absolute into `text` and advanced
+    past the leading whitespace the `^\\s*` part of the regex matches, so
+    block = text[offset:] starts with "Item …" not a stray `\\n`.
     """
+    end = len(text) if end is None else end
+    titles = ITEM_TITLES if titles is None else titles
     last_by_item: dict[str, int] = {}
-    for m in _ITEM_RE.finditer(text):
-        item = _normalize_item_id(m.group("num"), m.group("sub"))
-        if item not in ITEM_TITLES:
+    for m in _ITEM_RE.finditer(text, start, end):
+        item = id_prefix + _normalize_item_id(m.group("num"), m.group("sub"))
+        if item not in titles:
             continue
         pos = m.start()
         while pos < len(text) and text[pos] in " \t\n":
@@ -140,17 +182,69 @@ def _resolve_headers(text: str) -> list[tuple[int, str]]:
     return sorted(((pos, item) for item, pos in last_by_item.items()))
 
 
-def parse_sections(html: str) -> list[Section]:
-    """Split a 10-K filing into Section objects.
+def _resolve_part_ranges(text: str) -> list[tuple[str, int, int]]:
+    """Locate the real PART I / PART II headings in a 10-Q.
 
-    Returns sections in document order. Sections shorter than
-    `_MIN_SECTION_CHARS` are dropped — they're almost always TOC noise that
-    survived the last-occurrence heuristic (e.g. a filing that mentions
-    "Item 15" only once, inside the TOC, because the exhibit list uses a
-    different header style).
+    Returns [(part_label, start, end)] in document order. The real Part II
+    heading is the LAST "PART II" match (TOC entries come earlier); the
+    real Part I heading is the last "PART I" match BEFORE that point — a
+    cross-reference like "Part I, Item 2" inside Part II body can't steal
+    the boundary by construction.
+    """
+    part1_positions = []
+    part2_positions = []
+    for m in _PART_RE.finditer(text):
+        (part2_positions if m.group("part").upper() == "II" else part1_positions).append(
+            m.start()
+        )
+    if not part1_positions or not part2_positions:
+        return []
+    p2 = part2_positions[-1]
+    p1_candidates = [p for p in part1_positions if p < p2]
+    if not p1_candidates:
+        return []
+    p1 = p1_candidates[-1]
+    return [("I", p1, p2), ("II", p2, len(text))]
+
+
+def parse_sections(html: str, form: str = "10-K") -> list[Section]:
+    """Split a filing into Section objects.
+
+    `form` selects the header-resolution strategy: anything containing
+    "10-Q" gets the two-part, namespaced treatment ("I.2", "II.1A");
+    everything else uses the flat 10-K item space. Returns sections in
+    document order. Sections shorter than `_MIN_SECTION_CHARS` are
+    dropped — they're almost always TOC noise that survived the
+    last-occurrence heuristic (e.g. a filing that mentions "Item 15" only
+    once, inside the TOC, because the exhibit list uses a different header
+    style).
     """
     text = html_to_text(html)
-    headers = _resolve_headers(text)
+    is_10q = "10-Q" in form.upper()
+
+    if is_10q:
+        titles = ITEM_TITLES_10Q
+        headers: list[tuple[int, str]] = []
+        for label, p_start, p_end in _resolve_part_ranges(text):
+            headers.extend(
+                _resolve_headers(
+                    text,
+                    start=p_start,
+                    end=p_end,
+                    titles=titles,
+                    id_prefix=f"{label}.",
+                )
+            )
+        # Fall back to flat resolution if the part headings weren't found
+        # (some older filings inline them oddly). Better a mislabeled
+        # section than an empty parse.
+        if not headers:
+            headers = _resolve_headers(text, titles=ITEM_TITLES)
+            titles = ITEM_TITLES
+    else:
+        titles = ITEM_TITLES
+        headers = _resolve_headers(text, titles=titles)
+
     if not headers:
         return []
 
@@ -169,7 +263,7 @@ def parse_sections(html: str) -> list[Section]:
 
         # Use the filing's header text after the item number if it looks
         # like a real title; otherwise fall back to the canonical title.
-        title = _extract_title(header_line) or ITEM_TITLES[item]
+        title = _extract_title(header_line) or titles[item]
         sections.append(
             Section(
                 item=item,

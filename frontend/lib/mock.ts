@@ -15,7 +15,7 @@ export const mockQuestions: Question[] = [
   { id: "q-revenue",    text: "What was total revenue and YoY growth?" },
   { id: "q-segment",    text: "Which segment grew the fastest?" },
   { id: "q-risk-top",   text: "What is the most prominent risk factor?" },
-  { id: "q-ai-mention", text: "How is AI discussed in MD&A?" },
+  { id: "q-outlook",    text: "What is management's outlook or projection for future performance?" },
 ];
 
 export const mockResults: CellResult[] = [
