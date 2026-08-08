@@ -40,6 +40,10 @@ PRICING_USD_PER_1M_TOKENS: dict[str, float] = {
 
 # OpenAI's per-request limit for the text-embedding-3-* family.
 _MAX_TOKENS_PER_REQUEST = 300_000
+# Pack against a discounted budget, not the hard limit: the server's token
+# count runs well above our local cl100k_base count on filing text (observed
+# ~22% higher — a 299,887-token batch by tiktoken was rejected as 367,404).
+_PACK_TOKEN_BUDGET = 200_000
 # Conservative ceiling on inputs per request — the API documents 2048.
 _MAX_INPUTS_PER_REQUEST = 2048
 
@@ -83,16 +87,16 @@ class EmbeddingClient:
         current: list[int] = []
         current_tokens = 0
         for i, n in enumerate(sizes):
-            if n > _MAX_TOKENS_PER_REQUEST:
-                # A single chunk over the per-request limit means the
+            if n > _PACK_TOKEN_BUDGET:
+                # A single chunk over the packing budget means the
                 # chunker produced something out of contract. We refuse
                 # rather than silently truncate — the caller should fix
                 # the chunker, not lose data.
                 raise ValueError(
                     f"Chunk at index {i} has {n} tokens, exceeds "
-                    f"{_MAX_TOKENS_PER_REQUEST} per-request limit"
+                    f"{_PACK_TOKEN_BUDGET} packing budget"
                 )
-            over_tokens = current_tokens + n > _MAX_TOKENS_PER_REQUEST
+            over_tokens = current_tokens + n > _PACK_TOKEN_BUDGET
             over_count = len(current) >= _MAX_INPUTS_PER_REQUEST
             if current and (over_tokens or over_count):
                 batches.append(current)
